@@ -77,7 +77,18 @@ export default function TechnicalSimulator({
       };
 
       rec.onerror = (event: any) => {
-        console.error(event.error);
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setApiError('Microphone access was denied. Please allow microphone permission in your browser settings or type your response.');
+        } else if (event.error === 'no-speech') {
+          setApiError('No speech detected. Please try speaking louder or check your microphone.');
+        } else if (event.error === 'audio-capture') {
+          setApiError('Microphone not found or not working. Please check your microphone connection or type your response.');
+        } else if (event.error === 'network') {
+          setApiError('Network error occurred. Speech recognition requires an internet connection.');
+        } else {
+          setApiError(`Speech recognition error: ${event.error}. Please try again or type your response.`);
+        }
         setIsRecording(false);
       };
 
@@ -89,14 +100,27 @@ export default function TechnicalSimulator({
     }
   }, []);
 
-  const handleStartRecording = () => {
-    if (!recognitionRef.current) return;
+  const handleStartRecording = async () => {
+    if (!recognitionRef.current) {
+      setApiError('Speech recognition is not supported on this browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
     setApiError(null);
+    
+    // Request microphone permission first
     try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsRecording(true);
       recognitionRef.current.start();
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error('Microphone access error:', e);
+      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+        setApiError('Microphone access denied. Please allow microphone permission in your browser settings or type your response instead.');
+      } else if (e.name === 'NotFoundError') {
+        setApiError('No microphone found. Please connect a microphone or type your response instead.');
+      } else {
+        setApiError('Could not access microphone. Please type your response instead.');
+      }
       setIsRecording(false);
     }
   };
