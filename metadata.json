@@ -1,0 +1,6 @@
+{
+  "name": "Placement Prep Platform",
+  "description": "An interactive AI-powered placement and interview prep platform featuring a Communication Lab, STAR-based HR Simulator, and Technical DSA Simulator.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
