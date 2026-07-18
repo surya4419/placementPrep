@@ -393,7 +393,7 @@ app.post('/api/transcribe', async (req, res) => {
 
     const ai = getAiClient();
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-1.5-flash',
       contents: [
         {
           role: 'user',
@@ -497,7 +497,7 @@ User's "Think Aloud" Explanation of their Approach:
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-1.5-flash',
       contents: contentsPrompt,
       config: {
         systemInstruction: systemPrompt,
