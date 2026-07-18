@@ -6,17 +6,28 @@ import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
-import { ObjectId } from 'mongodb';
-import { connectToDatabase } from './src/lib/mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-me';
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
+
+// ── MongoDB connection (cached) ───────────────────────────────────────────────
+let cachedClient: MongoClient | null = null;
+
+async function getDb() {
+  if (!cachedClient) {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) throw new Error('MONGODB_URI environment variable is not set');
+    cachedClient = await MongoClient.connect(uri);
+  }
+  return cachedClient.db(process.env.MONGODB_DB_NAME || 'interview_prep');
+}
 
 // Auth Middleware
 const authenticateToken = async (req: any, res: any, next: any) => {
@@ -49,7 +60,7 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const usersCollection = db.collection('users');
 
     // Check if user already exists
@@ -77,7 +88,7 @@ app.post('/api/auth/signup', async (req, res) => {
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
 
@@ -104,7 +115,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const usersCollection = db.collection('users');
 
     // Find user
@@ -132,7 +143,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
@@ -153,7 +164,7 @@ app.post('/api/auth/login', async (req, res) => {
 // Get current user
 app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
   try {
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const usersCollection = db.collection('users');
     
     const user = await usersCollection.findOne({ _id: new ObjectId(req.userId) });
@@ -189,7 +200,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const usersCollection = db.collection('users');
 
     const user = await usersCollection.findOne({ email: email.toLowerCase() });
@@ -236,7 +247,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'Invalid reset token' });
     }
 
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const usersCollection = db.collection('users');
 
     const user = await usersCollection.findOne({ _id: new ObjectId(decoded.userId) });
@@ -267,7 +278,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 app.post('/api/user/attempts', authenticateToken, async (req: any, res) => {
   try {
     const { attempt } = req.body;
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     
     await db.collection('attempts').insertOne({
       ...attempt,
@@ -285,7 +296,7 @@ app.post('/api/user/attempts', authenticateToken, async (req: any, res) => {
 // Get user's attempts
 app.get('/api/user/attempts', authenticateToken, async (req: any, res) => {
   try {
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const attempts = await db.collection('attempts')
       .find({ userId: req.userId })
       .sort({ submittedAt: 1 })
@@ -302,7 +313,7 @@ app.get('/api/user/attempts', authenticateToken, async (req: any, res) => {
 app.post('/api/user/stories', authenticateToken, async (req: any, res) => {
   try {
     const { story } = req.body;
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     
     // Upsert by questionId
     await db.collection('stories').updateOne(
@@ -321,7 +332,7 @@ app.post('/api/user/stories', authenticateToken, async (req: any, res) => {
 // Get user's stories
 app.get('/api/user/stories', authenticateToken, async (req: any, res) => {
   try {
-    const { db } = await connectToDatabase();
+    const db = await getDb();
     const stories = await db.collection('stories')
       .find({ userId: req.userId })
       .sort({ lastUpdated: -1 })
@@ -333,7 +344,6 @@ app.get('/api/user/stories', authenticateToken, async (req: any, res) => {
     return res.status(500).json({ error: 'Failed to get stories' });
   }
 });
-app.use(cookieParser());
 
 // Lazy init the GoogleGenAI SDK to prevent startup crashes if GEMINI_API_KEY is missing.
 let aiClient: GoogleGenAI | null = null;
