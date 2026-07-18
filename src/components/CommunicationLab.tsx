@@ -54,20 +54,40 @@ export default function CommunicationLab({ questions, onSaveAttempt, onNavigateH
         let finalTranscript = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+            finalTranscript += transcript;
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += transcript;
           }
         }
 
+        // Always update with final results
         if (finalTranscript) {
-          setTextResponse(prev => prev + (prev ? ' ' : '') + finalTranscript);
+          console.log('Final transcript:', finalTranscript);
+          setTextResponse(prev => {
+            const newText = prev ? prev + ' ' + finalTranscript : finalTranscript;
+            console.log('Updated text response:', newText);
+            return newText;
+          });
+        }
+        
+        // Show interim results in console for debugging
+        if (interimTranscript) {
+          console.log('Interim transcript:', interimTranscript);
         }
       };
 
       rec.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
+        
+        // Ignore 'aborted' errors - they happen during normal stop operations
+        if (event.error === 'aborted') {
+          console.log('Recognition aborted - this is normal when stopping');
+          setIsRecording(false);
+          return;
+        }
+        
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           setApiError('Microphone access was denied. Please allow microphone permission in your browser settings or type your response.');
         } else if (event.error === 'no-speech') {
@@ -82,8 +102,29 @@ export default function CommunicationLab({ questions, onSaveAttempt, onNavigateH
         setIsRecording(false);
       };
 
+      rec.onstart = () => {
+        console.log('Speech recognition started successfully');
+      };
+
       rec.onend = () => {
+        console.log('Speech recognition ended');
         setIsRecording(false);
+      };
+
+      rec.onaudiostart = () => {
+        console.log('Audio capturing started');
+      };
+
+      rec.onaudioend = () => {
+        console.log('Audio capturing ended');
+      };
+
+      rec.onspeechstart = () => {
+        console.log('Speech detected');
+      };
+
+      rec.onspeechend = () => {
+        console.log('Speech ended');
       };
 
       recognitionRef.current = rec;
@@ -97,11 +138,29 @@ export default function CommunicationLab({ questions, onSaveAttempt, onNavigateH
       return;
     }
     
+    // Prevent starting if already recording
+    if (isRecording) return;
+    
     // Request microphone permission first
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsRecording(true);
-      recognitionRef.current.start();
+      
+      // Small delay to ensure clean state
+      setTimeout(() => {
+        try {
+          recognitionRef.current.start();
+        } catch (err: any) {
+          if (err.message?.includes('already started')) {
+            // Already running, just ignore
+            console.log('Recognition already started');
+          } else {
+            console.error('Start error:', err);
+            setApiError('Could not start recording. Please try again.');
+            setIsRecording(false);
+          }
+        }
+      }, 100);
     } catch (e: any) {
       console.error('Microphone access error:', e);
       if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -116,11 +175,11 @@ export default function CommunicationLab({ questions, onSaveAttempt, onNavigateH
   };
 
   const handleStopRecording = () => {
-    if (recognitionRef.current) {
+    if (recognitionRef.current && isRecording) {
       try {
         recognitionRef.current.stop();
       } catch (e) {
-        console.error(e);
+        console.error('Stop error:', e);
       }
     }
     setIsRecording(false);
@@ -290,16 +349,18 @@ export default function CommunicationLab({ questions, onSaveAttempt, onNavigateH
                 
                 {/* Visual Audio Waveform if Recording */}
                 {isRecording && (
-                  <div className="absolute inset-x-0 bottom-4 flex items-center justify-center space-x-1 bg-white/95 py-3 border-t border-slate-100">
-                    <span className="text-xs font-semibold text-blue-600 mr-2 flex items-center space-x-1">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping mr-1" />
-                      Listening...
-                    </span>
-                    <div className="h-4 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.1s]" />
-                    <div className="h-6 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.2s]" />
-                    <div className="h-8 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.3s]" />
-                    <div className="h-5 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.4s]" />
-                    <div className="h-3 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.5s]" />
+                  <div className="absolute inset-0 bg-blue-50/30 border-2 border-blue-500 rounded-xl pointer-events-none">
+                    <div className="absolute inset-x-0 bottom-4 flex items-center justify-center space-x-1 bg-white/95 py-3 border-t border-slate-100">
+                      <span className="text-xs font-semibold text-blue-600 mr-2 flex items-center space-x-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-ping mr-1" />
+                        Listening... Speak now!
+                      </span>
+                      <div className="h-4 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.1s]" />
+                      <div className="h-6 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.2s]" />
+                      <div className="h-8 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.3s]" />
+                      <div className="h-5 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.4s]" />
+                      <div className="h-3 w-1 bg-blue-500 rounded animate-bounce [animation-delay:0.5s]" />
+                    </div>
                   </div>
                 )}
               </div>

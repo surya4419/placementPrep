@@ -78,28 +78,36 @@ export default function HrSimulator({
       rec.lang = 'en-US';
 
       rec.onresult = (event: any) => {
-        let transcript = '';
+        let finalTranscript = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            transcript += event.results[i][0].transcript;
+            finalTranscript += transcript;
           }
         }
 
-        if (transcript) {
+        if (finalTranscript) {
+          console.log('Final transcript for field:', activeVoiceField, finalTranscript);
+          
           if (activeVoiceField === 'freeform') {
-            setResponseText(prev => prev + (prev ? ' ' : '') + transcript);
+            setResponseText(prev => {
+              const newText = prev ? prev + ' ' + finalTranscript : finalTranscript;
+              console.log('Updated freeform text:', newText);
+              return newText;
+            });
           } else if (activeVoiceField === 'situation') {
-            setSituation(prev => prev + (prev ? ' ' : '') + transcript);
+            setSituation(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           } else if (activeVoiceField === 'task') {
-            setTask(prev => prev + (prev ? ' ' : '') + transcript);
+            setTask(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           } else if (activeVoiceField === 'action') {
-            setAction(prev => prev + (prev ? ' ' : '') + transcript);
+            setAction(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           } else if (activeVoiceField === 'result') {
-            setResult(prev => prev + (prev ? ' ' : '') + transcript);
+            setResult(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           } else if (activeVoiceField === 'reflection') {
-            setReflection(prev => prev + (prev ? ' ' : '') + transcript);
+            setReflection(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           } else if (activeVoiceField === 'followup') {
-            setFollowUpAnswer(prev => prev + (prev ? ' ' : '') + transcript);
+            setFollowUpAnswer(prev => prev ? prev + ' ' + finalTranscript : finalTranscript);
           }
         }
       };
@@ -121,9 +129,22 @@ export default function HrSimulator({
         setActiveVoiceField(null);
       };
 
+      rec.onstart = () => {
+        console.log('Speech recognition started');
+      };
+
       rec.onend = () => {
+        console.log('Speech recognition ended');
         setIsRecording(false);
         setActiveVoiceField(null);
+      };
+
+      rec.onaudiostart = () => {
+        console.log('Audio capturing started');
+      };
+
+      rec.onspeechstart = () => {
+        console.log('Speech detected');
       };
 
       recognitionRef.current = rec;
@@ -135,6 +156,10 @@ export default function HrSimulator({
       setApiError('Speech recognition is not supported on this browser. Please use Chrome, Edge, or Safari.');
       return;
     }
+    
+    // Prevent starting if already recording
+    if (isRecording) return;
+    
     setApiError(null);
     
     // Request microphone permission first
@@ -142,7 +167,22 @@ export default function HrSimulator({
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setActiveVoiceField(field);
       setIsRecording(true);
-      recognitionRef.current.start();
+      
+      // Small delay to ensure clean state
+      setTimeout(() => {
+        try {
+          recognitionRef.current.start();
+        } catch (err: any) {
+          if (err.message?.includes('already started')) {
+            console.log('Recognition already started');
+          } else {
+            console.error('Start error:', err);
+            setApiError('Could not start recording. Please try again.');
+            setIsRecording(false);
+            setActiveVoiceField(null);
+          }
+        }
+      }, 100);
     } catch (e: any) {
       console.error('Microphone access error:', e);
       if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -158,11 +198,11 @@ export default function HrSimulator({
   };
 
   const stopVoiceCapture = () => {
-    if (recognitionRef.current) {
+    if (recognitionRef.current && isRecording) {
       try {
         recognitionRef.current.stop();
       } catch (e) {
-        console.error(e);
+        console.error('Stop error:', e);
       }
     }
     setIsRecording(false);

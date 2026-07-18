@@ -65,19 +65,35 @@ export default function TechnicalSimulator({
       rec.lang = 'en-US';
 
       rec.onresult = (event: any) => {
-        let transcript = '';
+        let finalTranscript = '';
+
         for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            transcript += event.results[i][0].transcript;
+            finalTranscript += transcript;
           }
         }
-        if (transcript) {
-          setThinkAloudText(prev => prev + (prev ? ' ' : '') + transcript);
+
+        if (finalTranscript) {
+          console.log('Final transcript:', finalTranscript);
+          setThinkAloudText(prev => {
+            const newText = prev ? prev + ' ' + finalTranscript : finalTranscript;
+            console.log('Updated think-aloud text:', newText);
+            return newText;
+          });
         }
       };
 
       rec.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
+        
+        // Ignore 'aborted' errors - they happen during normal stop operations
+        if (event.error === 'aborted') {
+          console.log('Recognition aborted - this is normal when stopping');
+          setIsRecording(false);
+          return;
+        }
+        
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           setApiError('Microphone access was denied. Please allow microphone permission in your browser settings or type your response.');
         } else if (event.error === 'no-speech') {
@@ -92,8 +108,21 @@ export default function TechnicalSimulator({
         setIsRecording(false);
       };
 
+      rec.onstart = () => {
+        console.log('Speech recognition started');
+      };
+
       rec.onend = () => {
+        console.log('Speech recognition ended');
         setIsRecording(false);
+      };
+
+      rec.onaudiostart = () => {
+        console.log('Audio capturing started');
+      };
+
+      rec.onspeechstart = () => {
+        console.log('Speech detected');
       };
 
       recognitionRef.current = rec;
@@ -105,13 +134,31 @@ export default function TechnicalSimulator({
       setApiError('Speech recognition is not supported on this browser. Please use Chrome, Edge, or Safari.');
       return;
     }
+    
+    // Prevent starting if already recording
+    if (isRecording) return;
+    
     setApiError(null);
     
     // Request microphone permission first
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsRecording(true);
-      recognitionRef.current.start();
+      
+      // Small delay to ensure clean state
+      setTimeout(() => {
+        try {
+          recognitionRef.current.start();
+        } catch (err: any) {
+          if (err.message?.includes('already started')) {
+            console.log('Recognition already started');
+          } else {
+            console.error('Start error:', err);
+            setApiError('Could not start recording. Please try again.');
+            setIsRecording(false);
+          }
+        }
+      }, 100);
     } catch (e: any) {
       console.error('Microphone access error:', e);
       if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -126,11 +173,11 @@ export default function TechnicalSimulator({
   };
 
   const handleStopRecording = () => {
-    if (recognitionRef.current) {
+    if (recognitionRef.current && isRecording) {
       try {
         recognitionRef.current.stop();
       } catch (e) {
-        console.error(e);
+        console.error('Stop error:', e);
       }
     }
     setIsRecording(false);
