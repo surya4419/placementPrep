@@ -23,10 +23,28 @@ async function getDb() {
   if (!cachedClient) {
     const uri = process.env.MONGODB_URI;
     if (!uri) throw new Error('MONGODB_URI environment variable is not set');
-    cachedClient = await MongoClient.connect(uri);
+    cachedClient = await MongoClient.connect(uri, { serverSelectionTimeoutMS: 10000 });
   }
   return cachedClient.db(process.env.MONGODB_DB_NAME || 'interview_prep');
 }
+
+// ── Debug endpoint (shows env var presence, NOT values) ──────────────────────
+app.get('/api/health', async (req, res) => {
+  const checks: any = {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    MONGODB_URI: process.env.MONGODB_URI ? '✅ set' : '❌ MISSING',
+    JWT_SECRET: process.env.JWT_SECRET ? '✅ set' : '⚠️ using fallback',
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY ? '✅ set' : '❌ MISSING',
+  };
+  try {
+    await getDb();
+    checks.mongodb_connection = '✅ connected';
+  } catch (e: any) {
+    checks.mongodb_connection = `❌ ${e.message}`;
+  }
+  res.json(checks);
+});
 
 // Auth Middleware
 const authenticateToken = async (req: any, res: any, next: any) => {
@@ -101,7 +119,7 @@ app.post('/api/auth/signup', async (req, res) => {
     });
   } catch (error: any) {
     console.error('Signup error:', error);
-    return res.status(500).json({ error: 'Signup failed' });
+    return res.status(500).json({ error: error.message || 'Signup failed' });
   }
 });
 
@@ -156,7 +174,7 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error: any) {
     console.error('Login error:', error);
-    return res.status(500).json({ error: 'Login failed' });
+    return res.status(500).json({ error: error.message || 'Login failed' });
   }
 });
 
