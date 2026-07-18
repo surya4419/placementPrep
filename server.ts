@@ -3,13 +3,337 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
+import { ObjectId } from 'mongodb';
+import { connectToDatabase } from './src/lib/mongodb';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
+
+// Auth Middleware
+const authenticateToken = async (req: any, res: any, next: any) => {
+  try {
+    const token = req.cookies.token || req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+};
+
+// Auth Routes
+// Signup
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection('users');
+
+    // Check if user already exists
+    const existingUser = await usersCollection.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const result = await usersCollection.insertOne({
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString()
+    });
+
+    // Create JWT token
+    const token = jwt.sign({ userId: result.insertedId.toString() }, JWT_SECRET, { expiresIn: '30d' });
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    return res.json({
+      user: {
+        id: result.insertedId.toString(),
+        name,
+        email: email.toLowerCase()
+      },
+      token
+    });
+  } catch (error: any) {
+    console.error('Signup error:', error);
+    return res.status(500).json({ error: 'Signup failed' });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection('users');
+
+    // Find user
+    const user = await usersCollection.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Update last active
+    await usersCollection.updateOne(
+      { _id: user._id },
+      { $set: { lastActive: new Date().toISOString() } }
+    );
+
+    // Create JWT token
+    const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+
+    return res.json({
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email
+      },
+      token
+    });
+  } catch (error: any) {
+    console.error('Login error:', error);
+    return res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Get current user
+app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
+  try {
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection('users');
+    
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.userId) });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    return res.json({
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email
+      }
+    });
+  } catch (error: any) {
+    console.error('Get user error:', error);
+    return res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  return res.json({ message: 'Logged out successfully' });
+});
+
+// Forgot password (request reset)
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection('users');
+
+    const user = await usersCollection.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Don't reveal if email exists
+      return res.json({ message: 'If an account exists, a reset link will be sent' });
+    }
+
+    // Generate reset token (in production, send this via email)
+    const resetToken = jwt.sign({ userId: user._id.toString(), purpose: 'reset' }, JWT_SECRET, { expiresIn: '1h' });
+
+    await usersCollection.updateOne(
+      { _id: user._id },
+      { $set: { resetToken, resetTokenExpiry: new Date(Date.now() + 3600000).toISOString() } }
+    );
+
+    // In production, send email here
+    // For now, return token (remove this in production!)
+    return res.json({ 
+      message: 'If an account exists, a reset link will be sent',
+      resetToken // Remove in production!
+    });
+  } catch (error: any) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// Reset password
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({ error: 'Reset token and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const decoded: any = jwt.verify(resetToken, JWT_SECRET);
+    if (decoded.purpose !== 'reset') {
+      return res.status(400).json({ error: 'Invalid reset token' });
+    }
+
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection('users');
+
+    const user = await usersCollection.findOne({ _id: new ObjectId(decoded.userId) });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await usersCollection.updateOne(
+      { _id: user._id },
+      { 
+        $set: { password: hashedPassword },
+        $unset: { resetToken: '', resetTokenExpiry: '' }
+      }
+    );
+
+    return res.json({ message: 'Password reset successfully' });
+  } catch (error: any) {
+    console.error('Reset password error:', error);
+    return res.status(401).json({ error: 'Invalid or expired reset token' });
+  }
+});
+
+// User Data Routes (Protected)
+// Save user's attempt
+app.post('/api/user/attempts', authenticateToken, async (req: any, res) => {
+  try {
+    const { attempt } = req.body;
+    const { db } = await connectToDatabase();
+    
+    await db.collection('attempts').insertOne({
+      ...attempt,
+      userId: req.userId,
+      createdAt: new Date().toISOString()
+    });
+
+    return res.json({ message: 'Attempt saved successfully' });
+  } catch (error: any) {
+    console.error('Save attempt error:', error);
+    return res.status(500).json({ error: 'Failed to save attempt' });
+  }
+});
+
+// Get user's attempts
+app.get('/api/user/attempts', authenticateToken, async (req: any, res) => {
+  try {
+    const { db } = await connectToDatabase();
+    const attempts = await db.collection('attempts')
+      .find({ userId: req.userId })
+      .sort({ submittedAt: 1 })
+      .toArray();
+
+    return res.json({ attempts });
+  } catch (error: any) {
+    console.error('Get attempts error:', error);
+    return res.status(500).json({ error: 'Failed to get attempts' });
+  }
+});
+
+// Save STAR story
+app.post('/api/user/stories', authenticateToken, async (req: any, res) => {
+  try {
+    const { story } = req.body;
+    const { db } = await connectToDatabase();
+    
+    // Upsert by questionId
+    await db.collection('stories').updateOne(
+      { userId: req.userId, questionId: story.questionId },
+      { $set: { ...story, userId: req.userId, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+
+    return res.json({ message: 'Story saved successfully' });
+  } catch (error: any) {
+    console.error('Save story error:', error);
+    return res.status(500).json({ error: 'Failed to save story' });
+  }
+});
+
+// Get user's stories
+app.get('/api/user/stories', authenticateToken, async (req: any, res) => {
+  try {
+    const { db } = await connectToDatabase();
+    const stories = await db.collection('stories')
+      .find({ userId: req.userId })
+      .sort({ lastUpdated: -1 })
+      .toArray();
+
+    return res.json({ stories });
+  } catch (error: any) {
+    console.error('Get stories error:', error);
+    return res.status(500).json({ error: 'Failed to get stories' });
+  }
+});
+app.use(cookieParser());
 
 // Lazy init the GoogleGenAI SDK to prevent startup crashes if GEMINI_API_KEY is missing.
 let aiClient: GoogleGenAI | null = null;

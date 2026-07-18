@@ -37,9 +37,28 @@ In the Render dashboard, add these environment variables:
 |-----|-------|
 | `NODE_ENV` | `production` |
 | `GEMINI_API_KEY` | Your Gemini API key from step 1 |
+| `MONGODB_URI` | Your MongoDB connection string |
+| `JWT_SECRET` | A random secure string (e.g., use password generator) |
 | `PORT` | Automatically set by Render (no need to add) |
 
-**Important**: Make sure to mark `GEMINI_API_KEY` as secret/hidden!
+**Important**: Mark all sensitive values as secret/hidden!
+
+#### Getting MongoDB Connection String:
+
+1. Go to [MongoDB Atlas](https://cloud.mongodb.com)
+2. Create a free account (if you don't have one)
+3. Create a new cluster (free M0 tier available)
+4. Click "Connect" → "Connect your application"
+5. Copy the connection string (looks like: `mongodb+srv://username:password@cluster.mongodb.net/`)
+6. Replace `<password>` with your database password
+7. Add this as the `MONGODB_URI` environment variable
+
+#### Generating JWT Secret:
+
+Use a password generator to create a random 32+ character string, or run:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
 ### 5. Deploy
 
@@ -54,6 +73,15 @@ In the Render dashboard, add these environment variables:
 - **GEMINI_API_KEY**: Your Google Gemini API key for AI evaluations
   - Get it from: https://aistudio.google.com/app/apikey
   - This is required for the app to function
+
+- **MONGODB_URI**: Your MongoDB connection string for user data storage
+  - Get from: https://cloud.mongodb.com
+  - Format: `mongodb+srv://username:password@cluster.mongodb.net/`
+  - Free tier available (M0 cluster)
+
+- **JWT_SECRET**: Secret key for authentication tokens
+  - Generate a random 32+ character string
+  - Keep this secret and never share it
 
 ### Automatically Set by Render
 - **PORT**: Render automatically sets this (typically 10000)

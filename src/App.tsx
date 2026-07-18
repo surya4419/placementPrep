@@ -32,60 +32,95 @@ import Dashboard from './components/Dashboard';
 import CommunicationLab from './components/CommunicationLab';
 import HrSimulator from './components/HrSimulator';
 import TechnicalSimulator from './components/TechnicalSimulator';
+import Auth from './components/Auth';
+import Profile from './components/Profile';
 
 export default function App() {
+  const [user, setUser] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'communication' | 'hr' | 'technical'>('dashboard');
   const [attempts, setAttempts] = useState<ResponseAttempt[]>([]);
   const [starStories, setStarStories] = useState<STARStory[]>([]);
   const [selectedAttemptForReview, setSelectedAttemptForReview] = useState<ResponseAttempt | null>(null);
 
-  // Load state from localStorage on init
+  // Check if user is logged in
   useEffect(() => {
-    try {
-      const savedAttempts = localStorage.getItem('interview_prep_attempts');
-      const savedStories = localStorage.getItem('interview_prep_stories');
-      
-      let parsedAttempts: ResponseAttempt[] = [];
-      let parsedStories: STARStory[] = [];
-
-      if (savedAttempts) {
-        parsedAttempts = JSON.parse(savedAttempts);
-      }
-      if (savedStories) {
-        parsedStories = JSON.parse(savedStories);
-      }
-
-      // If attempts are empty, pre-seed with 17 days of mock data automatically
-      if (parsedAttempts.length === 0) {
-        const seed = generateMockData();
-        setAttempts(seed.attempts);
-        setStarStories(seed.starStories);
-        localStorage.setItem('interview_prep_attempts', JSON.stringify(seed.attempts));
-        localStorage.setItem('interview_prep_stories', JSON.stringify(seed.starStories));
-      } else {
-        setAttempts(parsedAttempts);
-        setStarStories(parsedStories);
-      }
-    } catch (e) {
-      console.error('Failed to load storage state:', e);
-    }
+    checkAuth();
   }, []);
 
-  // Save changes to localStorage
-  const saveAttemptsToStorage = (newAttempts: ResponseAttempt[]) => {
+  const checkAuth = async () => {
     try {
-      localStorage.setItem('interview_prep_attempts', JSON.stringify(newAttempts));
-    } catch (e) {
-      console.error('Failed to save attempts:', e);
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        credentials: 'include'
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setUser(data.user);
+        await loadUserData();
+      } else {
+        localStorage.removeItem('token');
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error);
+      localStorage.removeItem('token');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const saveStoriesToStorage = (newStories: STARStory[]) => {
+  // Load user data from database
+  const loadUserData = async () => {
     try {
-      localStorage.setItem('interview_prep_stories', JSON.stringify(newStories));
-    } catch (e) {
-      console.error('Failed to save stories:', e);
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const [attemptsRes, storiesRes] = await Promise.all([
+        fetch('/api/user/attempts', {
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include'
+        }),
+        fetch('/api/user/stories', {
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include'
+        })
+      ]);
+
+      if (attemptsRes.ok) {
+        const { attempts: userAttempts } = await attemptsRes.json();
+        setAttempts(userAttempts);
+      }
+
+      if (storiesRes.ok) {
+        const { stories: userStories } = await storiesRes.json();
+        setStarStories(userStories);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
     }
+  };
+
+  const handleLoginSuccess = (userData: any) => {
+    setUser(userData);
+    loadUserData();
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setAttempts([]);
+    setStarStories([]);
+    setShowProfile(false);
+    localStorage.removeItem('token');
   };
 
   // Streaks and statistics calculation
@@ -131,13 +166,28 @@ export default function App() {
     };
   }, [attempts]);
 
-  const handleSaveAttempt = (newAttempt: ResponseAttempt) => {
+  const handleSaveAttempt = async (newAttempt: ResponseAttempt) => {
     const updated = [...attempts, newAttempt];
     setAttempts(updated);
-    saveAttemptsToStorage(updated);
+    
+    // Save to database
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('/api/user/attempts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ attempt: newAttempt })
+      });
+    } catch (error) {
+      console.error('Failed to save attempt to database:', error);
+    }
   };
 
-  const handleSaveStarStory = (newStory: STARStory) => {
+  const handleSaveStarStory = async (newStory: STARStory) => {
     // Check if duplicate questionId, replace if so
     const existingIndex = starStories.findIndex(s => s.questionId === newStory.questionId);
     let updated: STARStory[];
@@ -148,17 +198,47 @@ export default function App() {
       updated = [...starStories, newStory];
     }
     setStarStories(updated);
-    saveStoriesToStorage(updated);
+    
+    // Save to database
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('/api/user/stories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ story: newStory })
+      });
+    } catch (error) {
+      console.error('Failed to save story to database:', error);
+    }
   };
 
   const handleResetToDemo = () => {
     const seed = generateMockData();
     setAttempts(seed.attempts);
     setStarStories(seed.starStories);
-    localStorage.setItem('interview_prep_attempts', JSON.stringify(seed.attempts));
-    localStorage.setItem('interview_prep_stories', JSON.stringify(seed.starStories));
     setActiveTab('dashboard');
   };
+
+  // Show loading spinner
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-slate-600 text-sm">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth screen if not logged in
+  if (!user) {
+    return <Auth onLoginSuccess={handleLoginSuccess} />;
+  }
 
   return (
     <div id="app-root" className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
@@ -233,6 +313,13 @@ export default function App() {
               <Flame className="w-4 h-4 text-amber-500 fill-amber-500" />
               <span className="text-xs font-bold text-amber-700 font-display">{stats.streak} Days</span>
             </div>
+            <button
+              onClick={() => setShowProfile(true)}
+              className="flex items-center space-x-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 px-3 py-1.5 rounded-full transition"
+            >
+              <User className="w-4 h-4 text-blue-600" />
+              <span className="text-xs font-bold text-blue-700 hidden sm:inline">{user.name}</span>
+            </button>
           </div>
         </div>
       </header>
@@ -289,6 +376,17 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 mt-12">
         <p>© 2026 Placement Prep Platform • Powered by Gemini AI Studio • All Rights Reserved</p>
       </footer>
+
+      {/* Profile Modal */}
+      <AnimatePresence>
+        {showProfile && (
+          <Profile 
+            user={user} 
+            onLogout={handleLogout} 
+            onClose={() => setShowProfile(false)} 
+          />
+        )}
+      </AnimatePresence>
 
       {/* Detailed Evaluation Review Modal */}
       <AnimatePresence>
