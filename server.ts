@@ -383,6 +383,43 @@ function getAiClient(): GoogleGenAI {
   return aiClient;
 }
 
+// Transcription API Endpoint (audio -> text via Gemini)
+app.post('/api/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'audioBase64 is required' });
+    }
+
+    const ai = getAiClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType || 'audio/webm',
+                data: audioBase64,
+              }
+            },
+            {
+              text: 'Transcribe this audio accurately and completely. Return ONLY the transcript text, no labels, no explanations, no punctuation changes — just the spoken words exactly as said.'
+            }
+          ]
+        }
+      ]
+    });
+
+    const transcript = response.text?.trim() || '';
+    return res.json({ transcript });
+  } catch (error: any) {
+    console.error('Transcription error:', error);
+    return res.status(500).json({ error: error.message || 'Transcription failed' });
+  }
+});
+
 // Evaluation API Endpoint
 app.post('/api/evaluate', async (req, res) => {
   try {
